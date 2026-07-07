@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>City Map Routing Simulator</title>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #e8eaed; 
+    --panel: #ffffff;
+    --border: #dadce0;
+    --road: #ffffff;
+    --road-border: #bdc1c6;
+    --road-closed: #ea4335;
+    --road-traffic: #f5a94e;
+    --route: #4285f4;
+    --explored: #d2e3fc;
+    --start: #0f9d58;
+    --end: #ea4335;
+    --text: #202124;
+    --text-dim: #5f6368;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Roboto', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Toolbar */
+  .toolbar {
+    background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 24px;
+    display: flex; flex-wrap: wrap; gap: 20px;
+    align-items: center; justify-content: space-between;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    z-index: 10;
+  }
+  .brand h1 { font-size: 20px; margin: 0 0 4px 0; font-weight: 500; }
+  .brand span { font-size: 12px; color: var(--text-dim); }
+  .group { display: flex; gap: 12px; align-items: center; }
+
+  select {
+    font-family: inherit; font-size: 14px;
+    background: var(--panel); color: var(--text);
+    border: 1px solid var(--border); border-radius: 4px;
+    padding: 8px 12px; outline: none; cursor: pointer;
+  }
+
+  .tools { display: flex; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+  .btn {
+    background: var(--panel); border: none; color: var(--text-dim);
+    padding: 8px 16px; cursor: pointer; font-size: 14px; font-family: inherit;
+    border-right: 1px solid var(--border); transition: 0.2s;
+  }
+  .btn:last-child { border-right: none; }
+  .btn:hover { background: #f1f3f4; }
+  .btn.active { background: #e8f0fe; color: #1a73e8; font-weight: 500; }
+
+  .action {
+    font-family: inherit; font-weight: 500; font-size: 14px;
+    padding: 8px 16px; border-radius: 4px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text); cursor: pointer; transition: 0.2s;
+  }
+  .action:hover { background: #f1f3f4; }
+  .action:disabled { opacity: 0.5; cursor: not-allowed; }
+  .action.primary { background: #1a73e8; color: white; border: none; }
+  .action.primary:hover { background: #1557b0; }
+
+  /* Map */
+  .map-wrap { flex: 1; display: flex; justify-content: center; align-items: center; overflow: hidden; padding: 20px; }
+  svg {
+    background:#e8eaed; background-image:linear-gradient(rgba(255,255,255,.35) 2px,transparent 2px),linear-gradient(90deg,rgba(255,255,255,.35) 2px,transparent 2px),linear-gradient(#d7e8d0,#d7e8d0); background-size:70px 70px,70px 70px,100% 100%; border: 1px solid var(--border);
+    border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    max-width: 100%; max-height: 100%;
+  }
+
+  .edge { stroke: var(--road); stroke-width: 8; stroke-linecap: round; cursor: pointer; transition: 0.2s; }
+  .edge-bg { stroke: var(--road-border); stroke-width: 12; stroke-linecap: round; }
+  .edge:hover { stroke: #f1f3f4; }
+  
+  .edge.closed { stroke: var(--road-closed); stroke-dasharray: 6 6; stroke-width: 6; }
+  .edge.traffic { stroke: var(--road-traffic); stroke-width: 10; } /* visual indicator for heavy weight */
+  .edge.explored { stroke: var(--explored); stroke-width: 8; }
+  .edge.path {
+    stroke: var(--route); stroke-width: 8;
+    stroke-dasharray: 1000; stroke-dashoffset: 1000;
+    animation: draw 0.5s forwards ease-in-out;
+  }
+  @keyframes draw { to { stroke-dashoffset: 0; } }
+
+  .node { fill: #ffffff; stroke: var(--road-border); stroke-width: 2; cursor: pointer; transition: 0.2s; }
+  .node:hover { fill: #f1f3f4; transform: scale(1.2); }
+
+  .pin { pointer-events: none; transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+</style>
+</head>
+<body>
+
+  <div class="toolbar">
+    <div class="brand">
+      <h1>Route Simulator</h1>
+      <span>Interactive Road Network</span>
+    </div>
+
+    <div class="group">
+      <select id="algo">
+        <option value="dijkstra">Dijkstra's Algorithm</option>
+        <option value="astar">A* Search (Fastest)</option>
+                <option value="floyd">Floyd-Warshall Algorithm</option>
+        <option value="bfs">Breadth-First Search (Ignores Traffic)</option>
+        <option value="dfs">Depth-First Search (Ignores Traffic)</option>
+      </select>
+    </div>
+
+    <div class="group">
+      <div class="tools" role="group">
+        <button class="btn active" data-tool="roadblock">Toggle Roadblock</button>
+        <button class="btn" data-tool="weight">Add Traffic</button>
+        <button class="btn" data-tool="start">Move Source</button>
+        <button class="btn" data-tool="end">Move Destination</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <button class="action" id="clearBtn">Clear Route</button>
+      <button class="action" id="resetBtn">Reset Map</button>
+      <button class="action primary" id="runBtn">Find Route</button>
+    </div>
+  </div>
+
+  <div class="map-wrap">
+    <svg id="map" width="900" height="600" viewBox="0 0 900 600">
+      <g id="bg-layer"></g>
+      <g id="edge-layer"></g>
+      <g id="node-layer"></g>
+      
+      <!-- Pin 'Source' -->
+      <g id="pin-source" class="pin">
+        <path d="M0,-24 C-8,-24 -14,-18 -14,-10 C-14,-2 -4,12 0,16 C4,12 14,-2 14,-10 C14,-18 8,-24 0,-24 Z" fill="#0f9d58"/>
+        <circle cx="0" cy="-11" r="6" fill="white"/>
+        <text x="0" y="-8" font-size="10" font-weight="bold" fill="#0f9d58" text-anchor="middle">S</text>
+      </g>
+      
+      <!-- Pin 'Destination' -->
+      <g id="pin-dest" class="pin">
+        <path d="M0,-24 C-8,-24 -14,-18 -14,-10 C-14,-2 -4,12 0,16 C4,12 14,-2 14,-10 C14,-18 8,-24 0,-24 Z" fill="#ea4335"/>
+        <circle cx="0" cy="-11" r="6" fill="white"/>
+        <text x="0" y="-8" font-size="10" font-weight="bold" fill="#ea4335" text-anchor="middle">D</text>
+      </g>
+</svg>
+  </div>
+
+<script>
+(function(){
+  // Audio Synthesizer
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const play = (freq, type, dur, vol=0.1) => {
+    if(ctx.state === 'suspended') ctx.resume();
+    let osc = ctx.createOscillator(), gain = ctx.createGain();
+    osc.type = type; osc.frequency.value = freq;
+    gain.gain.setValueAtTime(vol, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + dur);
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.start(); osc.stop(ctx.currentTime + dur);
+  };
+
+  const sfx = {
+    thud: () => play(150, 'triangle', 0.1, 0.8),
+    pop:  () => play(600, 'sine', 0.1, 0.5),
+    blip: () => play(800 + Math.random()*400, 'square', 0.05, 0.05), 
+    ding: () => play(1200, 'sine', 0.1, 0.5),
+    buzz: () => play(100, 'sawtooth', 0.5, 0.6)
+  };
+
+  // State
+  let nodes = [], edges = [];
+  let source = 'n-3-2', destination = 'n-3-9'; 
+  let tool = 'roadblock';
+  let running = false; 
+
+  const dom = {
+    bg: document.getElementById('bg-layer'),
+    edge: document.getElementById('edge-layer'),
+    node: document.getElementById('node-layer'),
+    pinSource: document.getElementById('pin-source'),
+    pinDest: document.getElementById('pin-dest'),
+  };
+
+  function init() {
+    nodes = []; edges = [];
+    dom.bg.innerHTML = ''; dom.edge.innerHTML = ''; dom.node.innerHTML = '';
+
+    for(let r=0; r<8; r++) {
+      for(let c=0; c<12; c++) {
+        let jx = (c===0 || c===11) ? 0 : (Math.random() - 0.5) * 15;
+        let jy = (r===0 || r===7)  ? 0 : (Math.random() - 0.5) * 15;
+        nodes.push({ id: `n-${r}-${c}`, r, c, x: c*70 + 65 + jx, y: r*70 + 55 + jy, links: [] });
+      }
+    }
+
+    nodes.forEach(n => {
+      if(n.c < 11) makeRoad(n, nodes.find(x => x.r === n.r && x.c === n.c + 1));
+      if(n.r < 7)  makeRoad(n, nodes.find(x => x.r === n.r + 1 && x.c === n.c));
+    });
+
+    nodes.forEach(n => {
+      let circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      circle.setAttribute("cx", n.x); circle.setAttribute("cy", n.y);
+      circle.setAttribute("r", 6); circle.setAttribute("class", "node");
+      circle.addEventListener('click', () => clickNode(n));
+      dom.node.appendChild(circle);
+    });
+
+    drawPins();
+  }
+
+  function makeRoad(n1, n2) {
+    let bgLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    bgLine.setAttribute("x1", n1.x); bgLine.setAttribute("y1", n1.y);
+    bgLine.setAttribute("x2", n2.x); bgLine.setAttribute("y2", n2.y);
+    bgLine.setAttribute("class", "edge-bg");
+    dom.bg.appendChild(bgLine);
+
+    let line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    line.setAttribute("x1", n1.x); line.setAttribute("y1", n1.y);
+    line.setAttribute("x2", n2.x); line.setAttribute("y2", n2.y);
+    line.setAttribute("class", "edge");
+
+    let baseW = Math.hypot(n2.x - n1.x, n2.y - n1.y);
+    let edge = { n1, n2, closed: false, heavy: false, baseWeight: baseW, weight: baseW, el: line };
+
+    line.addEventListener('click', () => {
+      if(running) return;
+      
+      if (tool === 'roadblock') {
+        edge.closed = !edge.closed;
+        sfx.thud();
+        edge.closed ? line.classList.add('closed') : line.classList.remove('closed');
+      } 
+      else if (tool === 'weight') {
+        edge.heavy = !edge.heavy;
+        // Traffic penalty is huge so algorithms prefer to go around
+        edge.weight = edge.baseWeight + (edge.heavy ? 2000 : 0);
+        sfx.pop();
+        edge.heavy ? line.classList.add('traffic') : line.classList.remove('traffic');
+      }
+    });
+
+    dom.edge.appendChild(line);
+    n1.links.push(edge); n2.links.push(edge);
+    edges.push(edge);
+  }
+
+  document.querySelectorAll('.btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      tool = btn.dataset.tool;
+    });
+  });
+
+  function clickNode(n) {
+    if(running) return;
+    if(tool === 'start' && n.id !== destination) { source = n.id; sfx.pop(); drawPins(); }
+    if(tool === 'end' && n.id !== source)        { destination = n.id; sfx.pop(); drawPins(); }
+  }
+
+  function drawPins() {
+    let nodeS = nodes.find(n => n.id === source);
+    let nodeD = nodes.find(n => n.id === destination);
+    dom.pinSource.setAttribute('transform', `translate(${nodeS.x}, ${nodeS.y})`);
+    dom.pinDest.setAttribute('transform', `translate(${nodeD.x}, ${nodeD.y})`);
+  }
+
+  function clear() {
+    edges.forEach(e => {
+      e.el.classList.remove('explored', 'path');
+      e.el.style.animation = 'none'; e.el.offsetHeight; e.el.style.animation = null; 
+    });
+
+  }
+
+  document.getElementById('clearBtn').addEventListener('click', () => { if(!running) clear(); });
+  document.getElementById('resetBtn').addEventListener('click', () => { if(!running) { init();
+ } });
+
+  const delay = ms => new Promise(r => setTimeout(r, ms));
+
+  function getNeighbors(node) {
+    let nbrs = [];
+    node.links.forEach(e => {
+      if(!e.closed) nbrs.push({ n: (e.n1.id === node.id) ? e.n2 : e.n1, e });
+    });
+    return nbrs;
+  }
+
+  // Common function to backtrack and build the path
+  function getPath(endState) {
+    let eList = [], nList = [endState.n];
+    let curr = endState;
+    while(curr.prev) {
+      eList.push(curr.eUsed); nList.unshift(curr.prev.n); curr = curr.prev;
+    }
+    return { edges: eList.reverse(), nodes: nList };
+  }
+
+  // --- ALGORITHMS ---
+
+  function dijkstra(startNode, endNode) {
+    let seen = new Set(), history = [], dists = new Map();
+    nodes.forEach(n => dists.set(n.id, { dist: Infinity, prev: null, n, eUsed: null }));
+    dists.get(startNode.id).dist = 0;
+    
+    let unvis = [...nodes];
+    while(unvis.length > 0) {
+      unvis.sort((x, y) => dists.get(x.id).dist - dists.get(y.id).dist);
+      let curr = dists.get(unvis.shift().id);
+
+      if(curr.dist === Infinity) break; 
+      seen.add(curr.n.id);
+      if(curr.eUsed) history.push(curr.eUsed);
+      if(curr.n.id === endNode.id) return { history, path: getPath(curr) };
+
+      for(let {n: nbr, e: edge} of getNeighbors(curr.n)) {
+        if(seen.has(nbr.id)) continue;
+        let alt = curr.dist + edge.weight;
+        let state = dists.get(nbr.id);
+        if(alt < state.dist) { state.dist = alt; state.prev = curr; state.eUsed = edge; }
+      }
+    }
+    return { history, path: null }; 
+  }
+
+  function astar(startNode, endNode) {
+    let seen = new Set(), history = [], states = new Map();
+    const h = (n1, n2) => Math.hypot(n2.x - n1.x, n2.y - n1.y);
+    
+    nodes.forEach(n => states.set(n.id, { g: Infinity, f: Infinity, prev: null, n, eUsed: null }));
+    states.get(startNode.id).g = 0;
+    states.get(startNode.id).f = h(startNode, endNode);
+    let open = [startNode.id];
+
+    while(open.length > 0) {
+      open.sort((x, y) => states.get(x).f - states.get(y).f);
+      let currId = open.shift();
+      let currNode = nodes.find(n => n.id === currId);
+      let currState = states.get(currId);
+
+      seen.add(currId);
+      if(currState.eUsed && !history.includes(currState.eUsed)) history.push(currState.eUsed);
+
+      if(currId === endNode.id) return { history, path: getPath(currState) };
+
+      for(let {n: nbr, e: edge} of getNeighbors(currNode)) {
+        if(seen.has(nbr.id)) continue;
+        
+        let maybeNewG = currState.g + edge.weight;
+        let nState = states.get(nbr.id);
+
+        if(maybeNewG < nState.g) {
+          nState.prev = currState;
+          nState.g = maybeNewG;
+          nState.f = maybeNewG + h(nbr, endNode);
+          nState.eUsed = edge;
+          
+          if(!open.includes(nbr.id)) open.push(nbr.id);
+        }
+      }
+    }
+    return { history, path: null };
+  }
+
+  // Floyd-Warshall maps shortest paths between *all* node pairs
+  function floydWarshall(startNode, endNode) {
+    let history = [];
+    let dist = new Map(), next = new Map();
+
+    nodes.forEach(u => {
+      dist.set(u.id, new Map()); next.set(u.id, new Map());
+      nodes.forEach(v => { dist.get(u.id).set(v.id, Infinity); next.get(u.id).set(v.id, null); });
+      dist.get(u.id).set(u.id, 0);
+    });
+
+    edges.forEach(e => {
+      if(!e.closed) {
+        dist.get(e.n1.id).set(e.n2.id, e.weight);
+        dist.get(e.n2.id).set(e.n1.id, e.weight);
+        next.get(e.n1.id).set(e.n2.id, e);
+        next.get(e.n2.id).set(e.n1.id, e);
+      }
+    });
+
+    for (let k of nodes) {
+      for (let i of nodes) {
+        for (let j of nodes) {
+          let ij = dist.get(i.id).get(j.id);
+          let ik = dist.get(i.id).get(k.id);
+          let kj = dist.get(k.id).get(j.id);
+          
+          if (ik !== Infinity && kj !== Infinity && ik + kj < ij) {
+            dist.get(i.id).set(j.id, ik + kj);
+            next.get(i.id).set(j.id, next.get(i.id).get(k.id));
+            
+            // For animation, only show calculations related to the start node to prevent massive lag
+            if (i.id === startNode.id) {
+              history.push(next.get(i.id).get(k.id));
+            }
+          }
+        }
+      }
+    }
+
+    if(dist.get(startNode.id).get(endNode.id) === Infinity) return { history, path: null };
+
+    // Reconstruct route
+    let pathEdges = [], pathNodes = [startNode];
+    let curr = startNode.id, dest = endNode.id;
+    
+    while(curr !== dest) {
+      let e = next.get(curr).get(dest);
+      if(!e) return { history, path: null };
+      pathEdges.push(e);
+      let nextId = (e.n1.id === curr) ? e.n2.id : e.n1.id;
+      pathNodes.push(nodes.find(n => n.id === nextId));
+      curr = nextId;
+    }
+
+    return { history, path: { edges: pathEdges, nodes: pathNodes } };
+  }
+
+  function bfs(startNode, endNode) {
+    let seen = new Set([startNode.id]), history = [], q = [{ n: startNode, prev: null, eUsed: null }];
+    let endState = null;
+
+    while(q.length > 0) {
+      let curr = q.shift(); 
+      if(curr.eUsed) history.push(curr.eUsed);
+      if(curr.n.id === endNode.id) { endState = curr; break; }
+
+      for(let {n: nbr, e: edge} of getNeighbors(curr.n)) {
+        if(!seen.has(nbr.id)) {
+          seen.add(nbr.id);
+          q.push({ n: nbr, prev: curr, eUsed: edge });
+        }
+      }
+    }
+    return { history, path: endState ? getPath(endState) : null };
+  }
+
+  function dfs(startNode, endNode) {
+    let seen = new Set(), history = [], stack = [{ n: startNode, prev: null, eUsed: null }];
+    let endState = null;
+
+    while(stack.length > 0) {
+      let curr = stack.pop(); 
+      if(seen.has(curr.n.id)) continue; 
+      seen.add(curr.n.id);
+      
+      if(curr.eUsed) history.push(curr.eUsed);
+      if(curr.n.id === endNode.id) { endState = curr; break; }
+
+      for(let {n: nbr, e: edge} of getNeighbors(curr.n)) {
+        if(!seen.has(nbr.id)) stack.push({ n: nbr, prev: curr, eUsed: edge });
+      }
+    }
+    return { history, path: endState ? getPath(endState) : null };
+  }
+
+  // Runner
+  document.getElementById('runBtn').addEventListener('click', async () => {
+    if(running) return;
+    if(ctx.state === 'suspended') ctx.resume();
+    
+    running = true; document.getElementById('runBtn').disabled = true;
+    clear();
+
+    let algo = document.getElementById('algo').value;
+    let nodeS = nodes.find(n => n.id === source);
+    let nodeD = nodes.find(n => n.id === destination);
+    
+    let res = algo === 'dijkstra' ? dijkstra(nodeS, nodeD) :
+              algo === 'astar'    ? astar(nodeS, nodeD) :
+              algo === 'floyd'    ? floydWarshall(nodeS, nodeD) :
+              algo === 'bfs'      ? bfs(nodeS, nodeD) : dfs(nodeS, nodeD);
+
+    // Limit massive animation arrays so browser doesn't freeze (e.g. Floyd/Bellman)
+    let drawLimit = Math.min(res.history.length, 1000);
+    for(let i=0; i<drawLimit; i++) {
+      if(res.history[i]) {
+        res.history[i].el.classList.add('explored');
+        sfx.blip(); 
+        await delay(algo === 'dfs' ? 20 : (algo === 'floyd' ? 2 : 15)); 
+      }
+    }
+
+    if(res.path) {
+      for(let i=0; i<res.path.edges.length; i++) {
+        res.path.edges[i].el.classList.add('path');
+        sfx.ding(); 
+        await delay(50);
+      }
+    } else {
+      setTimeout(() => { sfx.buzz(); alert("no routes found from source to destination"); }, 100);
+    }
+
+    running = false; document.getElementById('runBtn').disabled = false;
+  });
+
+  init();
+})();
+</script>
+</body>
+</html>
